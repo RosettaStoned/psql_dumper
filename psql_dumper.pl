@@ -11,6 +11,10 @@ use Try::Tiny;
 use Term::ReadKey;
 use SQL::Statement;
 
+binmode(STDIN,  ":utf8");
+binmode(STDOUT, ":utf8");
+binmode(STDERR, ":utf8");
+
 my ($help,$database,$host,$port,$username,$password,@schemes,@tables,$columns,$excluded_columns,@queries,$inserts,$updates,$filter,$columns_regexp)=@_;
 
 GetOptions(
