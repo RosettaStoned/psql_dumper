@@ -8,14 +8,30 @@ use Data::Dumper;
 use Pod::Usage;
 use DBI;
 use Try::Tiny;
-use Term::ReadKey;
 use SQL::Statement;
 
-binmode(STDIN,  ":utf8");
-binmode(STDOUT, ":utf8");
-binmode(STDERR, ":utf8");
+BEGIN {
+    binmode(STDIN,  ":utf8");
+    binmode(STDOUT, ":utf8");
+    binmode(STDERR, ":utf8");
+}
 
-my ($help,$database,$host,$port,$username,$password,@schemes,@tables,$columns,$excluded_columns,@queries,$inserts,$updates,$filter,$columns_regexp)=@_;
+my $host = "/var/run/postgresql";
+my $port = 5432;
+my $database;
+my $username;
+my $password;
+
+my @schemas;
+my @tables;
+my @queries;
+my $columns;
+my $excluded_columns;
+my $columns_regexp;
+my $filter;
+
+my $inserts;
+my $updated;
 
 GetOptions(
     "help|?"     => \$help,
@@ -68,16 +84,6 @@ Output options:
 );
 
 pod2usage($message_text) if $help || !defined ($database) || !defined($host);
-
-sub EnterPassword
-{
-    print STDERR "Enter password: ";
-    ReadMode 'noecho';
-    $password = ReadLine 0;
-    chomp $password;
-    ReadMode 'normal';
-    print "\n";
-}
 
 sub GetSchemeTables
 {
@@ -171,18 +177,14 @@ sub Dump
 
 sub Handler{
 
-    if( defined($username) && !defined( $password ) )
-    {
-        EnterPassword();
-    }
-
-    $port = defined( $port ) ? $port : "5432";
-
     my $dbh=DBI->connect("DBI:Pg:dbname = $database;host = $host;port = $port", $username, $password, {RaiseError => 1, PrintError=> 0, AutoCommit => 0});
 
     try
     {
-        if(!@tables && !@queries && @schemes)
+        if( !@tables && 
+            !@queries && 
+            @schemes
+        )
         {
             foreach my $scheme (@schemes)
             {
@@ -193,18 +195,27 @@ sub Handler{
                 }
             }
         }
-        elsif(!@schemes && !@queries && @tables)
+        elsif( !@schemes && 
+            !@queries && 
+            @tables
+        )
         {
             foreach my $table_name (@tables)
             {
-                if(!defined ($excluded_columns) && !defined($columns_regexp) && defined($columns))
+                if( !defined ($excluded_columns) && 
+                    !defined($columns_regexp) && 
+                    defined($columns)
+                )
                 {
 
 #When only columns are specified.
 
                     Dump($dbh,$table_name,qq(SELECT $columns FROM $table_name));
                 }
-                elsif(!defined($columns) && !defined($columns_regexp) && defined($excluded_columns))
+                elsif( !defined($columns) && 
+                    !defined($columns_regexp) && 
+                    defined($excluded_columns)
+                )
                 {
 
 #When only excluded columns are specified.
@@ -226,7 +237,10 @@ sub Handler{
 
                     Dump($dbh,$table_name,$query);
                 }
-                elsif(!defined($columns) && !defined($excluded_columns) && defined($columns_regexp))
+                elsif( !defined($columns) && 
+                    !defined($excluded_columns) && 
+                    defined($columns_regexp)
+                )
                 {
 
 #When only columns regexp are specified.
@@ -256,7 +270,10 @@ sub Handler{
                 }
             }
         }
-        elsif(!@schemes && !@tables && @queries)
+        elsif( !@schemes && 
+            !@tables && 
+            @queries
+        )
         {
             my $parser = SQL::Parser->new();
 
