@@ -16,6 +16,7 @@ BEGIN {
     binmode(STDERR, ":utf8");
 }
 
+my $help;
 my $host = "/var/run/postgresql";
 my $port = 5432;
 my $database;
@@ -31,7 +32,7 @@ my $columns_regexp;
 my $filter;
 
 my $inserts;
-my $updated;
+my $updates;
 
 GetOptions(
     "help|?"     => \$help,
@@ -40,7 +41,7 @@ GetOptions(
     "port|p=i"=>\$port,
     "username|U=s"=>\$username,
     "password|W=s"=>\$password,
-    "scheme|n=s"=>\@schemes,
+    "scheme|n=s"=>\@schemas,
     "table|t=s"=>\@tables,
     "columns|c=s"=>\$columns,
     "exclude-columns|ec=s"=>\$excluded_columns,
@@ -183,10 +184,10 @@ sub Handler{
     {
         if( !@tables && 
             !@queries && 
-            @schemes
+            @schemas
         )
         {
-            foreach my $scheme (@schemes)
+            foreach my $scheme (@schemas)
             {
                 GetSchemeTables($dbh,$scheme);
                 foreach my $table_name (@tables)
@@ -195,7 +196,7 @@ sub Handler{
                 }
             }
         }
-        elsif( !@schemes && 
+        elsif( !@schemas && 
             !@queries && 
             @tables
         )
@@ -270,7 +271,7 @@ sub Handler{
                 }
             }
         }
-        elsif( !@schemes && 
+        elsif( !@schemas && 
             !@tables && 
             @queries
         )
