@@ -64,24 +64,25 @@ psql_dumper -d DATABASE_NAME -t TABLE_NAME --inserts # outputs INSERT queries fo
 
 
 Connection options:
--d, --database=DATABASE  database name (required)
--h, --host=HOSTNAME      database server host or socket directory
--p, --port=PORT          database server port number
--U, --username=NAME      connect as specified database user
--W, --password           force password prompt (should prompt automatically)
+-d, --database=DATABASE database name (required)
+-h, --host=HOSTNAME     database server host or socket directory
+-p, --port=PORT         database server port number
+-U, --username=NAME     connect as specified database user
+-W, --password          force password prompt (should prompt automatically)
 
 
 General dump options:
--n, --scheme             dump the named schema(s) only (if -t is specified scheme is ignored)
--t, --table              dump the named table(s) only
--c, --columns            dump the specific column(s) from table(s) only (works only if table is specified)
--ec, --exclude-columns   exclude columns from dump results (works only if table is specified)
--cr, --columns-regexp    dump only columns matching the regexp (works only if table is specified)
--q, --query              dump results return by SQL SELECT statement(s) only
+-n,  --scheme           dump the named schema(s) only (if -t is specified scheme is ignored)
+-t,  --table            dump the named table(s) only
+-c,  --columns          dump the specific column(s) from table(s) only (works only if table is specified)
+-ec, --exclude-columns  exclude columns from dump results (works only if table is specified)
+-cr, --columns-regexp   dump only columns matching the regexp (works only if table is specified)
+-q,  --query            dump results return by SQL SELECT statement(s) only
+-f,  --filter           filter column (primary key column), for updates it defaults to `id` if available as a column
 
 Output options:
---inserts                dump only INSERT statements
---updates                dump only UPDATES statements
+--inserts               dump only INSERT statements
+--updates               dump only UPDATES statements
 
 !!! If no --inserts or --updates option are passed, dump results are printed in format from COPY command !!!
 );
@@ -117,17 +118,31 @@ sub Dump
 
     while (my $row_ary_ref = $sth->fetchrow_arrayref())
     {
-
         my $values = join(', ', map{ $dbh->quote($_) }@$row_ary_ref);
+        my %set = map { $record_set_columns[$_] => @$row_ary_ref[$_] } 0 .. $#record_set_columns;
 
         if(!defined($updates) && defined($inserts))
         {
-            my $insert_statement = qq(INSERT INTO $table_name ($columns) values ($values););
+            my $insert_statement = qq(INSERT INTO $table_name ($columns));
+
+            if(defined($filter)) 
+            {
+                if(!defined($set{$filter}))
+                {
+                    die "There is no column '$filter' in table '$table_name' ! \n";
+                }
+
+                $insert_statement = qq($insert_statement SELECT ($values) WHERE NOT EXISTS (SELECT 1 FROM $table_name WHERE $filter = $set{$filter} ););
+            }
+            else 
+            {
+                $insert_statement = qq($insert_statement values ($values););
+            }
+
             print "$insert_statement\n";
         }
         elsif(!defined($inserts) && defined($updates))
         {
-            my %set = map { $record_set_columns[$_] => @$row_ary_ref[$_] } 0 .. $#record_set_columns;
             my $update_set=join (', ', map {my $column = $dbh->quote_identifier($_); my $value = $dbh->quote($set{$_}); "$column = $value" } keys %set);
 
             if(!defined($filter) && defined($set{id}))
@@ -137,15 +152,13 @@ sub Dump
             }
             elsif(defined ($filter))
             {
-                if(defined($set{$filter}))
-                {
-                    my $update_statement=qq(UPDATE $table_name SET $update_set WHERE $filter = $set{$filter};);
-                    print "$update_statement\n";
-                }
-                else
+                if(!defined($set{$filter}))
                 {
                     die "There is no column '$filter' in table '$table_name' ! \n";
                 }
+
+                my $update_statement=qq(UPDATE $table_name SET $update_set WHERE $filter = $set{$filter};);
+                print "$update_statement\n";
             }
             else
             {
@@ -299,8 +312,10 @@ sub Handler{
         }
         else
         {
-            die "Invalid parameters ! Please specified just one of the options -> sheme, table(s) or query(queries) !\n$message_text\n";
+            die "Invalid parameters ! Please specified only one of the options -> schema, table(s) or query(queries) !\n$message_text\n";
         }
+
+
         $dbh->disconnect();
     }
     catch
