@@ -59,14 +59,16 @@ psql_dumper -d [DATABASE] -h [HOSTNAME] -p [PORT] -U [USERNAME] -W -t [TABLE] -c
 psql_dumper -d [DATABASE] -h [HOSTNAME] -p [PORT] -U [USERNAME] -W -t [TABLE] -n [SCHEME]  --updates||--inserts
 psql_dumper -d [DATABASE] -h [HOSTNAME] -p [PORT] -U [USERNAME] -W -t [TABLE] -q ["SELECT_QUERY"] -q ["SELECT_QUERY"] --updates||--inserts
 
+Minimal example:
+psql_dumper -d DATABASE_NAME -t TABLE_NAME --inserts # outputs INSERT queries for all rows in given TABLE_NAME 
 
 
 Connection options:
 -d, --database=DATABASE  database name (required)
--h, --host=HOSTNAME      database server host or socket directory (required)
--p, --port=PORT          database server port number (required)
--U, --username=NAME      connect as specified database user (required)
--W, --password           force password prompt (should happen automatically)
+-h, --host=HOSTNAME      database server host or socket directory
+-p, --port=PORT          database server port number
+-U, --username=NAME      connect as specified database user
+-W, --password           force password prompt (should prompt automatically)
 
 
 General dump options:
@@ -74,7 +76,7 @@ General dump options:
 -t, --table              dump the named table(s) only
 -c, --columns            dump the specific column(s) from table(s) only (works only if table is specified)
 -ec, --exclude-columns   exclude columns from dump results (works only if table is specified)
--cr, --columns_regexp    dump only columns matching the regexp (works only if table is specified)
+-cr, --columns-regexp    dump only columns matching the regexp (works only if table is specified)
 -q, --query              dump results return by SQL SELECT statement(s) only
 
 Output options:
