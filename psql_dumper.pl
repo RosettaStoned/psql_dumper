@@ -29,10 +29,11 @@ my @queries;
 my $columns;
 my $excluded_columns;
 my $columns_regexp;
-my $filter;
+my @filters;
 
 my $inserts;
 my $updates;
+my $copies;
 
 GetOptions(
     "help|?"     => \$help,
@@ -48,7 +49,8 @@ GetOptions(
     "query|q=s"=>\@queries,
     "inserts"=>\$inserts,
     "updates"=>\$updates,
-    "filter|f=s"=>\$filter,
+    "copies"=>\$copies,
+    "filter|f=s"=>\@filters,
     "columns-regexp|cr=s"=>\$columns_regexp
 );
 
@@ -60,7 +62,7 @@ psql_dumper -d [DATABASE] -h [HOSTNAME] -p [PORT] -U [USERNAME] -W -t [TABLE] -n
 psql_dumper -d [DATABASE] -h [HOSTNAME] -p [PORT] -U [USERNAME] -W -t [TABLE] -q ["SELECT_QUERY"] -q ["SELECT_QUERY"] --updates||--inserts
 
 Minimal example:
-psql_dumper -d DATABASE_NAME -t TABLE_NAME --inserts # outputs INSERT queries for all rows in given TABLE_NAME 
+psql_dumper -d DATABASE_NAME -t TABLE_NAME --inserts # outputs INSERT queries for all rows in given TABLE_NAME
 
 
 Connection options:
@@ -78,11 +80,12 @@ General dump options:
 -ec, --exclude-columns  exclude columns from dump results (works only if table is specified)
 -cr, --columns-regexp   dump only columns matching the regexp (works only if table is specified)
 -q,  --query            dump results return by SQL SELECT statement(s) only
--f,  --filter           filter column (primary key column), for updates it defaults to `id` if available as a column
+-f,  --filter           filter columns (primary key column/unique key columns), for updates it defaults to `id` if available as a column
 
 Output options:
 --inserts               dump only INSERT statements
 --updates               dump only UPDATES statements
+--copies                dump as COPY statement
 
 !!! If no --inserts or --updates option are passed, dump results are printed in format from COPY command !!!
 );
@@ -105,6 +108,26 @@ sub GetSchemeTables
     }
 }
 
+sub QuoteAndJoinHash($$$)
+{
+    my ($dbh, $hash, $join_operator) = @_;
+
+    if (ref $hash ne 'HASH')
+    {
+        die 'Second parameter must be a hash ref';
+    }
+
+    if (ref $join_operator ne '' || !$join_operator)
+    {
+        die 'Third parameter must be a string';
+    }
+
+    $join_operator = ' ' . $join_operator . ' ';
+
+    my $where_str = join ($join_operator, map {my $column = $dbh->quote_identifier($_); my $value = $dbh->quote($$hash{$_}); "$column = $value" } sort keys %{ $hash });
+
+    return $where_str;
+}
 
 sub Dump
 {
@@ -115,50 +138,72 @@ sub Dump
 
     my @record_set_columns = @{ $sth->{NAME} };
     my $columns = join(', ', map{ $dbh->quote_identifier ($_) } @record_set_columns);
+    
+    if (defined($copies) && !defined($updates) && !defined($inserts) && $sth->rows >= 1)
+    {
+        print "COPY $table_name ($columns) FROM stdin;\n";
+    }
 
     while (my $row_ary_ref = $sth->fetchrow_arrayref())
     {
         my $values = join(', ', map{ $dbh->quote($_) }@$row_ary_ref);
         my %set = map { $record_set_columns[$_] => @$row_ary_ref[$_] } 0 .. $#record_set_columns;
 
-        if(!defined($updates) && defined($inserts))
+        if(defined($inserts) && !defined($updates) && !defined($copies))
         {
             my $insert_statement = qq(INSERT INTO $table_name ($columns));
 
-            if(defined($filter)) 
+            if(@filters)
             {
-                if(!defined($set{$filter}))
+                my $where_hash = {};
+
+                for my $filter (@filters)
                 {
-                    die "There is no column '$filter' in table '$table_name' ! \n";
+                    if(!defined($set{$filter}))
+                    {
+                        die "There is no column '$filter' in table '$table_name' ! \n";
+                    }
+
+                    $$where_hash{$filter} = $set{$filter};
                 }
 
-                $insert_statement = qq($insert_statement SELECT ($values) WHERE NOT EXISTS (SELECT 1 FROM $table_name WHERE $filter = $set{$filter} ););
+                my $where_str = QuoteAndJoinHash($dbh, $where_hash, ' AND ');
+
+                $insert_statement = qq($insert_statement SELECT $values WHERE NOT EXISTS (SELECT 1 FROM $table_name WHERE $where_str ););
             }
-            else 
+            else
             {
                 $insert_statement = qq($insert_statement values ($values););
             }
-
+            
             print "$insert_statement\n";
         }
-        elsif(!defined($inserts) && defined($updates))
+        elsif(defined($updates) && !defined($inserts) && !defined($copies))
         {
-            my $update_set=join (', ', map {my $column = $dbh->quote_identifier($_); my $value = $dbh->quote($set{$_}); "$column = $value" } keys %set);
+            my $update_set = QuoteAndJoinHash($dbh, \%set, ', ');
 
-            if(!defined($filter) && defined($set{id}))
+            if(!@filters && defined($set{id}))
             {
-                my $update_statement=qq(UPDATE $table_name SET $update_set WHERE id = $set{id};);
-                print "$update_statement\n";
+                push @filters, 'id';
             }
-            elsif(defined ($filter))
+
+            if(@filters)
             {
-                if(!defined($set{$filter}))
+                my $where_hash = {};
+
+                for my $filter (@filters)
                 {
-                    die "There is no column '$filter' in table '$table_name' ! \n";
+                    if(!defined($set{$filter}))
+                    {
+                        die "There is no column '$filter' in table '$table_name' ! \n";
+                    }
+
+                    $$where_hash{$filter} = $set{$filter};
                 }
 
-                my $update_statement=qq(UPDATE $table_name SET $update_set WHERE $filter = $set{$filter};);
-                print "$update_statement\n";
+                my $where_str = QuoteAndJoinHash($dbh, $where_hash, ' AND ');
+
+                print qq(UPDATE $table_name SET $update_set WHERE $where_str;\n);
             }
             else
             {
@@ -168,27 +213,31 @@ sub Dump
         else
         {
             my $row;
-            foreach my $col (@$row_ary_ref)
+            foreach my $i (0 .. $#$row_ary_ref)
             {
+                $row .= "\t" if ($i != 0);
+
+                my $col = $$row_ary_ref[ $i ];
                 if(defined($col))
                 {
-                    $row.="$col\t";
+                    $col =~ s/\\/\\\\/;
+                    $row .= "$col";
                 }
                 else
                 {
-                    $row.="\\N\t";
+                    $row .= "\\N";
                 }
             }
-            print "$row\n";
+            print "$row\n" if (defined $row);
         }
     }
-
-    if(!defined($inserts) && !defined($updates))
+    
+    if(!defined($inserts) && !defined($updates) && $sth->rows >= 1)
     {
         print "\\.\n";
     }
-
-
+    
+    return;
 }
 
 sub Handler{
@@ -197,8 +246,8 @@ sub Handler{
 
     try
     {
-        if( !@tables && 
-            !@queries && 
+        if( !@tables &&
+            !@queries &&
             @schemas
         )
         {
@@ -211,15 +260,15 @@ sub Handler{
                 }
             }
         }
-        elsif( !@schemas && 
-            !@queries && 
+        elsif( !@schemas &&
+            !@queries &&
             @tables
         )
         {
             foreach my $table_name (@tables)
             {
-                if( !defined ($excluded_columns) && 
-                    !defined($columns_regexp) && 
+                if( !defined ($excluded_columns) &&
+                    !defined($columns_regexp) &&
                     defined($columns)
                 )
                 {
@@ -228,8 +277,8 @@ sub Handler{
 
                     Dump($dbh,$table_name,qq(SELECT $columns FROM $table_name));
                 }
-                elsif( !defined($columns) && 
-                    !defined($columns_regexp) && 
+                elsif( !defined($columns) &&
+                    !defined($columns_regexp) &&
                     defined($excluded_columns)
                 )
                 {
@@ -253,8 +302,8 @@ sub Handler{
 
                     Dump($dbh,$table_name,$query);
                 }
-                elsif( !defined($columns) && 
-                    !defined($excluded_columns) && 
+                elsif( !defined($columns) &&
+                    !defined($excluded_columns) &&
                     defined($columns_regexp)
                 )
                 {
@@ -286,8 +335,8 @@ sub Handler{
                 }
             }
         }
-        elsif( !@schemas && 
-            !@tables && 
+        elsif( !@schemas &&
+            !@tables &&
             @queries
         )
         {
