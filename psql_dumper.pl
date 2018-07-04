@@ -33,7 +33,7 @@ my @filters;
 
 my $inserts;
 my $updates;
-my $copies;
+my $copy;
 
 GetOptions(
     "help|?"     => \$help,
@@ -49,7 +49,7 @@ GetOptions(
     "query|q=s"=>\@queries,
     "inserts"=>\$inserts,
     "updates"=>\$updates,
-    "copies"=>\$copies,
+    "copy"=>\$copy,
     "filter|f=s"=>\@filters,
     "columns-regexp|cr=s"=>\$columns_regexp
 );
@@ -85,12 +85,16 @@ General dump options:
 Output options:
 --inserts               dump only INSERT statements
 --updates               dump only UPDATES statements
---copies                dump as COPY statement
+--copy                dump as COPY statement
 
 !!! If no --inserts or --updates option are passed, dump results are printed in format from COPY command !!!
 );
 
 pod2usage($message_text) if $help || !defined ($database) || !defined($host);
+die($message_text) if (scalar grep { defined($_) || $_ } $copy, $inserts, $updates) > 1;
+
+# NOTE: Make copy default
+$copy = 1 if (!defined($inserts) && !defined($updates));
 
 sub GetSchemeTables
 {
@@ -133,23 +137,37 @@ sub Dump
 {
     my ($dbh,$table_name,$query)=@_;
 
+
+ 
     my $sth=$dbh->prepare($query);
     $sth->execute();
 
     my @record_set_columns = @{ $sth->{NAME} };
     my $columns = join(', ', map{ $dbh->quote_identifier ($_) } @record_set_columns);
-    
-    if (defined($copies) && !defined($updates) && !defined($inserts) && $sth->rows >= 1)
+   
+    # NOTE: Handles COPY
+    if (defined($copy) && !defined($updates) && !defined($inserts))
     {
         print "COPY $table_name ($columns) FROM stdin;\n";
+
+        $dbh->do("COPY ($query) TO STDOUT");
+        my @data;
+        my $x=0;
+        1 while $dbh->pg_getcopydata(\$data[$x++]) >= 0;
+
+        print @data;
+        print "\\.\n";
+
+        return;
     }
 
+    # NOTE: Handles UPDATE and INSERT
     while (my $row_ary_ref = $sth->fetchrow_arrayref())
     {
         my $values = join(', ', map{ $dbh->quote($_) }@$row_ary_ref);
         my %set = map { $record_set_columns[$_] => @$row_ary_ref[$_] } 0 .. $#record_set_columns;
 
-        if(defined($inserts) && !defined($updates) && !defined($copies))
+        if(defined($inserts) && !defined($updates) && !defined($copy))
         {
             my $insert_statement = qq(INSERT INTO $table_name ($columns));
 
@@ -178,7 +196,7 @@ sub Dump
             
             print "$insert_statement\n";
         }
-        elsif(defined($updates) && !defined($inserts) && !defined($copies))
+        elsif(defined($updates) && !defined($inserts) && !defined($copy))
         {
             my $update_set = QuoteAndJoinHash($dbh, \%set, ', ');
 
@@ -212,29 +230,8 @@ sub Dump
         }
         else
         {
-            my $row;
-            foreach my $i (0 .. $#$row_ary_ref)
-            {
-                $row .= "\t" if ($i != 0);
-
-                my $col = $$row_ary_ref[ $i ];
-                if(defined($col))
-                {
-                    $col =~ s/\\/\\\\/;
-                    $row .= "$col";
-                }
-                else
-                {
-                    $row .= "\\N";
-                }
-            }
-            print "$row\n" if (defined $row);
+            die($message_text);
         }
-    }
-    
-    if(!defined($inserts) && !defined($updates) && $sth->rows >= 1)
-    {
-        print "\\.\n";
     }
     
     return;
