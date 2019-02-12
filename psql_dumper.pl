@@ -151,11 +151,14 @@ sub Dump
         print "COPY $table_name ($columns) FROM stdin;\n";
 
         $dbh->do("COPY ($query) TO STDOUT");
-        my @data;
-        my $x=0;
-        1 while $dbh->pg_getcopydata(\$data[$x++]) >= 0;
 
-        print @data;
+        while (1)
+        {
+            my $row = '';
+            last if $dbh->pg_getcopydata($row) < 0;
+            print $row;
+        }
+
         print "\\.\n";
 
         return;
